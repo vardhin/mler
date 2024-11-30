@@ -1,0 +1,62 @@
+[
+    {
+        "ip": "128.138.245.88",
+        "port": 59241,
+        "server": "stun:stun.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:36.903Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 34128,
+        "server": "stun:stun1.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:37.945Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 42348,
+        "server": "stun:stun2.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:38.982Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 52172,
+        "server": "stun:stun3.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:40.017Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 35948,
+        "server": "stun:stun4.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:41.061Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 50813,
+        "server": "stun:stun.relay.metered.ca:80",
+        "timestamp": "2024-11-30T12:10:42.582Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 35552,
+        "server": "stun:stun.cloudflare.com:3478",
+        "timestamp": "2024-11-30T12:10:43.817Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 41220,
+        "server": "stun:stun.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:44.873Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 41069,
+        "server": "stun:stun1.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:46.067Z"
+      },
+      {
+        "ip": "128.138.245.88",
+        "port": 58398,
+        "server": "stun:stun2.l.google.com:19302",
+        "timestamp": "2024-11-30T12:10:47.110Z"
+    }
+]

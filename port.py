@@ -204,31 +204,84 @@ class IPPortPredictor:
         """Generate a single port prediction based on input sequence"""
         current_seq = tuple(entry['port'] for entry in input_sequences[-self.seq_length:])
         
-        # Try to find the sequence in patterns
+        timestamps = [datetime.fromisoformat(entry['timestamp']) for entry in input_sequences]
+        time_diffs = [(timestamps[i+1] - timestamps[i]).total_seconds() 
+                      for i in range(len(timestamps)-1)]
+        avg_time_diff = sum(time_diffs) / len(time_diffs) if time_diffs else 0
+        
         if current_seq in self.port_patterns:
             possible_next = self.port_patterns[current_seq]
-            next_port = np.random.choice(possible_next)
+            # Prioritize frequently occurring ports in the pattern
+            port_counts = pd.Series(possible_next).value_counts()
+            if len(port_counts) > 1:
+                # If a port appears significantly more often, prefer it
+                if port_counts.iloc[0] > port_counts.iloc[1] * 2:
+                    next_port = port_counts.index[0]
+                else:
+                    next_port = np.random.choice(possible_next)
+            else:
+                next_port = possible_next[0]
         else:
-            # If sequence not found, use port distribution and common differences
             last_port = current_seq[-1]
             
-            # Get common port differences
-            if len(self.port_diffs) > 0:
-                common_diffs = self.port_diffs.index.tolist()
-                diff_weights = self.port_diffs.values
-                diff_weights = diff_weights / diff_weights.sum()
-                port_diff = np.random.choice(common_diffs, p=diff_weights)
+            # Look for similar patterns (allowing for small port differences)
+            similar_patterns = []
+            for pattern in self.port_patterns.keys():
+                if all(abs(a - b) <= 10 for a, b in zip(pattern, current_seq)):
+                    similar_patterns.extend(self.port_patterns[pattern])
+            
+            if similar_patterns:
+                # Use the most common next port from similar patterns
+                next_port = pd.Series(similar_patterns).mode()[0]
             else:
-                port_diff = np.random.randint(-1000, 1000)
-            
-            next_port = last_port + port_diff
-            
-            # Ensure port is within valid range
-            next_port = max(self.min_port, min(self.max_port, next_port))
+                # Modified port difference calculation
+                if len(self.port_diffs) > 0:
+                    common_diffs = self.port_diffs.index.tolist()
+                    diff_weights = self.port_diffs.values
+                    diff_weights = diff_weights / diff_weights.sum()
+                    
+                    # Add bias correction based on current port position
+                    port_range = self.max_port - self.min_port
+                    position_in_range = (last_port - self.min_port) / port_range
+                    
+                    # Adjust weights to prefer negative differences when closer to max_port
+                    # and positive differences when closer to min_port
+                    adjusted_weights = diff_weights.copy()
+                    for i, diff in enumerate(common_diffs):
+                        if position_in_range > 0.7 and diff > 0:  # Near max_port
+                            adjusted_weights[i] *= 0.5
+                        elif position_in_range < 0.3 and diff < 0:  # Near min_port
+                            adjusted_weights[i] *= 0.5
+                    
+                    adjusted_weights = adjusted_weights / adjusted_weights.sum()
+                    port_diff = np.random.choice(common_diffs, p=adjusted_weights)
+                    
+                    # Scale time-based adjustment
+                    if avg_time_diff > 60:
+                        time_factor = min(1.5, 1 + (avg_time_diff - 60) / 3600)
+                        port_diff = int(port_diff * time_factor)
+                else:
+                    # More controlled random difference when no patterns exist
+                    max_diff = min(1000, (self.max_port - self.min_port) // 10)
+                    port_diff = np.random.randint(-max_diff, max_diff)
+                
+                next_port = last_port + port_diff
+                
+                # Additional boundary adjustment to prevent clustering at edges
+                if next_port > self.max_port - 1000:
+                    next_port = self.max_port - np.random.randint(1000, 2000)
+                elif next_port < self.min_port + 1000:
+                    next_port = self.min_port + np.random.randint(1000, 2000)
+        
+        # Final boundary check
+        next_port = max(self.min_port, min(self.max_port, next_port))
         
         return {
             'port': int(next_port),
-            'prediction_number': prediction_number + 1
+            'prediction_number': prediction_number + 1,
+            'time_factor': avg_time_diff,
+            'pattern_match': current_seq in self.port_patterns,
+            'similar_pattern_match': bool(similar_patterns) if 'similar_patterns' in locals() else False
         }
 
     def train_model(self, json_file):
@@ -290,39 +343,50 @@ def display_menu():
     return input("Select an option (1-6): ")
 
 def parse_ip_port_logs(log_text):
-    """Parse ports from log entries"""
+    """Parse IP, port, and timestamp from log entries"""
     # Clean the input text - remove escape sequences and merge lines if needed
     clean_text = log_text.replace('^[E', '\n').strip()
     
     # Pattern to match IP:PORT
-    pattern = r'\d+\.\d+\.\d+\.\d+:(\d+)'
+    pattern = r'(\d+\.\d+\.\d+\.\d+):(\d+)'
     
     entries = []
     for line in clean_text.split('\n'):
         matches = re.finditer(pattern, line)
         for match in matches:
             entries.append({
-                'port': int(match.group(1))
+                'ip': match.group(1),
+                'port': int(match.group(2)),
+                'timestamp': datetime.now().isoformat()  # Use current time if not provided
             })
     
     return entries
 
 def get_input_sequences(seq_length):
-    """Get input sequences either manually or from pasted logs"""
-    print(f"\nEnter the last {seq_length} ports")
+    """Get input sequences either manually or from pasted logs or JSON"""
+    print(f"\nEnter at least {seq_length} records")
     print("Choose input method:")
     print("1. Manual entry")
     print("2. Paste log entries")
+    print("3. Load from JSON file")
     
-    choice = input("Select option (1-2): ")
+    choice = input("Select option (1-3): ")
     
     if choice == '1':
         # Manual entry
         input_sequences = []
         for i in range(seq_length):
-            port = int(input(f"Enter Port #{i+1}: "))
-            input_sequences.append({'port': port})
-    else:
+            print(f"\nEntry #{i+1}:")
+            ip = input("Enter IP: ")
+            port = int(input("Enter Port: "))
+            timestamp = datetime.now().isoformat()
+            input_sequences.append({
+                'ip': ip,
+                'port': port,
+                'timestamp': timestamp
+            })
+    
+    elif choice == '2':
         # Paste log entries
         print(f"\nPaste your log entries (at least {seq_length} lines):")
         print("Press Ctrl+D (Unix) or Ctrl+Z (Windows) followed by Enter when done")
@@ -342,13 +406,47 @@ def get_input_sequences(seq_length):
             print(f"Found only {len(all_entries)} valid entries")
             return None
             
-        # Take the last seq_length entries
         input_sequences = all_entries[-seq_length:]
+    
+    else:
+        # Load from JSON file
+        file_path = input("Enter JSON file path: ")
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"Error loading JSON file: {e}")
+            return None
         
-        print("\nParsed sequences:")
-        for i, seq in enumerate(input_sequences, 1):
-            print(f"#{i}: Port {seq['port']}")
+        # Handle both single record and array of records
+        if isinstance(data, dict):
+            data = [data]
         
+        # Convert to list of records with required fields
+        all_entries = []
+        for record in data:
+            entry = {
+                'ip': record.get('ip', ''),
+                'port': int(record['port']),
+                'timestamp': record.get('timestamp', datetime.now().isoformat())
+            }
+            all_entries.append(entry)
+        
+        if len(all_entries) < seq_length:
+            print(f"Error: Need at least {seq_length} valid entries")
+            print(f"Found only {len(all_entries)} valid entries")
+            return None
+                
+        input_sequences = all_entries
+    
+    print("\nParsed sequences:")
+    print(f"Total entries: {len(input_sequences)}")
+    print("\nSample of first few entries:")
+    for i, seq in enumerate(input_sequences[:5], 1):
+        print(f"#{i}: IP: {seq['ip']}, Port: {seq['port']}, Time: {seq['timestamp']}")
+    if len(input_sequences) > 5:
+        print("...")
+    
     return input_sequences
 
 def evaluate_prediction(predictions, actual):
