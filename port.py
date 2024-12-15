@@ -175,36 +175,52 @@ class IPPortPredictor:
         
         plt.figure(figsize=(15, 10))
         
-        # Plot 1: Time series of predictions
+        # Plot 1: Time series of predictions with improved styling
         plt.subplot(2, 1, 1)
-        plt.plot(pred_ports, label='Predicted Ports', marker='o', alpha=0.5)
-        plt.axhline(y=actual['port'], color='r', linestyle='--', label='Actual Port')
-        plt.axhline(y=self.min_port, color='g', linestyle=':', label='Min Port')
-        plt.axhline(y=self.max_port, color='g', linestyle=':', label='Max Port')
-        plt.title('Port Predictions vs Actual')
-        plt.xlabel('Prediction Number')
-        plt.ylabel('Port')
-        plt.legend()
+        plt.plot(pred_ports, label='Predicted Ports', marker='.', alpha=0.5, 
+                 color='skyblue', linestyle='-', markersize=4)
+        plt.axhline(y=actual['port'], color='red', linestyle='--', 
+                    label='Actual Port', linewidth=2)
+        plt.axhline(y=self.min_port, color='green', linestyle=':', 
+                    label='Min Port', alpha=0.5)
+        plt.axhline(y=self.max_port, color='green', linestyle=':', 
+                    label='Max Port', alpha=0.5)
+        plt.title('Port Predictions vs Actual', pad=15, fontsize=12)
+        plt.xlabel('Prediction Number', fontsize=10)
+        plt.ylabel('Port', fontsize=10)
+        plt.legend(loc='upper right', framealpha=0.9)
+        plt.grid(True, alpha=0.3)
         
-        # Plot 2: Distribution of predictions
+        # Plot 2: Distribution of predictions with improved styling
         plt.subplot(2, 1, 2)
-        sns.histplot(pred_ports, bins=50, kde=True)
-        plt.axvline(x=actual['port'], color='r', linestyle='--', label='Actual Port')
-        plt.axvline(x=np.mean(pred_ports), color='g', linestyle='--', label='Mean')
-        plt.axvline(x=np.median(pred_ports), color='b', linestyle='--', label='Median')
-        plt.title('Distribution of Predicted Ports')
-        plt.xlabel('Port')
-        plt.ylabel('Frequency')
-        plt.legend()
+        sns.histplot(pred_ports, bins=30, kde=True, color='skyblue', alpha=0.6)
+        plt.axvline(x=actual['port'], color='red', linestyle='--', 
+                    label='Actual Port', linewidth=2)
+        plt.axvline(x=np.mean(pred_ports), color='green', linestyle='--', 
+                    label='Mean', linewidth=2)
+        plt.axvline(x=np.median(pred_ports), color='blue', linestyle='--', 
+                    label='Median', linewidth=2)
+        plt.title('Distribution of Predicted Ports', pad=15, fontsize=12)
+        plt.xlabel('Port', fontsize=10)
+        plt.ylabel('Frequency', fontsize=10)
+        plt.legend(loc='upper right', framealpha=0.9)
+        plt.grid(True, alpha=0.3)
         
-        plt.tight_layout()
+        plt.tight_layout(pad=2.0)
         plt.show()
 
     def _generate_single_prediction(self, input_sequences, prediction_number=0):
         """Generate a single port prediction based on input sequence"""
         current_seq = tuple(entry['port'] for entry in input_sequences[-self.seq_length:])
         
-        timestamps = [datetime.fromisoformat(entry['timestamp']) for entry in input_sequences]
+        # Convert timestamps to naive datetime objects if they aren't already
+        timestamps = []
+        for entry in input_sequences:
+            ts = datetime.fromisoformat(entry['timestamp'])
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
+            timestamps.append(ts)
+        
         time_diffs = [(timestamps[i+1] - timestamps[i]).total_seconds() 
                       for i in range(len(timestamps)-1)]
         avg_time_diff = sum(time_diffs) / len(time_diffs) if time_diffs else 0
@@ -336,11 +352,12 @@ def display_menu():
     console.print("\n[bold cyan]=== Port Prediction System ===[/bold cyan]")
     console.print("1. Train New Model")
     console.print("2. Load Existing Model")
-    console.print("3. Make Predictions")
-    console.print("4. Save Current Model")
-    console.print("5. Model Information")
-    console.print("6. Exit")
-    return input("Select an option (1-6): ")
+    console.print("3. Make Continuous Predictions")
+    console.print("4. Make Individual Predictions")
+    console.print("5. Save Current Model")
+    console.print("6. Model Information")
+    console.print("7. Exit")
+    return input("Select an option (1-7): ")
 
 def parse_ip_port_logs(log_text):
     """Parse IP, port, and timestamp from log entries"""
@@ -488,6 +505,51 @@ def get_num_predictions():
         except ValueError:
             print("Please enter a valid number")
 
+def predict_individual(predictor):
+    """Make individual predictions for the next position"""
+    if predictor.data is None and not predictor.port_patterns:
+        predictor.console.print("[red]Please train or load a model first![/red]")
+        return
+        
+    # Get input sequence
+    input_sequences = get_input_sequences(predictor.seq_length)
+    if input_sequences is None:
+        return
+        
+    # Get number of predictions to make
+    num_pred = get_num_predictions()
+    
+    # Make all predictions at once
+    predictions = predictor.predict_next(input_sequences, num_predictions=num_pred)
+    
+    # Get actual port
+    while True:
+        try:
+            actual_port = int(input("\nEnter the actual next port: "))
+            if actual_port < predictor.min_port or actual_port > predictor.max_port:
+                print(f"Port must be between {predictor.min_port} and {predictor.max_port}")
+                continue
+            break
+        except ValueError:
+            print("Please enter a valid port number")
+    
+    actual = {'port': actual_port}
+    
+    # Evaluate predictions
+    exact_match, closest_match = evaluate_prediction(predictions, actual)
+    
+    if exact_match:
+        print(f"\nExact match found! (Prediction #{exact_match[0] + 1})")
+        print(f"Port: {exact_match[1]['port']}")
+    else:
+        print(f"\nClosest match was Prediction #{closest_match[0] + 1}:")
+        print(f"Port: {closest_match[1]['port']}")
+        print(f"Difference: {abs(closest_match[1]['port'] - actual['port']):,}")
+        print(f"Percentage Error: {(abs(closest_match[1]['port'] - actual['port']) / actual['port'] * 100):.2f}%")
+    
+    # Plot evaluation
+    predictor.plot_evaluation(predictions, actual)
+
 def main():
     predictor = IPPortPredictor()
     
@@ -568,13 +630,16 @@ def main():
                 predictor.plot_evaluation(predictions, actual)
 
         elif choice == '4':
+            predict_individual(predictor)
+
+        elif choice == '5':
             if predictor.port_patterns:
                 filename = input("Enter filename to save model (e.g., model.pkl): ")
                 predictor.save_model(filename)
             else:
                 predictor.console.print("[red]No model to save! Please train or load a model first.[/red]")
 
-        elif choice == '5':
+        elif choice == '6':
             if hasattr(predictor, 'stats'):
                 predictor.console.print("\n[bold cyan]Model Information:[/bold cyan]")
                 predictor.console.print(f"Total samples: {predictor.stats['total_samples']:,}")
@@ -586,7 +651,7 @@ def main():
             else:
                 predictor.console.print("[red]No model statistics available. Please train or load a model first.[/red]")
 
-        elif choice == '6':
+        elif choice == '7':
             predictor.console.print("[yellow]Goodbye![/yellow]")
             break
 
